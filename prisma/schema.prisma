@@ -1,0 +1,338 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// User & Identity (Keycloak Integration)
+// ============================================================================
+
+model User {
+  id          String   @id @default(cuid())
+  idpSubject  String   @unique // Keycloak subject ID
+  email       String
+  fullName    String?
+  phone       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  companyMemberships CompanyUser[]
+  driverProfile      DriverProfile?
+  createdBookings    Booking[]          @relation("BookingCreator")
+  assignedTrips       TripAssignment[]   @relation("TripDriver")
+  assignedByTrips     TripAssignment[]   @relation("TripAssigner")
+
+  @@index([idpSubject])
+  @@index([email])
+  @@map("users")
+}
+
+// ============================================================================
+// Multi-Tenant: Company & Membership
+// ============================================================================
+
+model Company {
+  id        String   @id @default(cuid())
+  name      String
+  timezone  String   @default("UTC") // IANA timezone (e.g., "America/Chicago")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  memberships CompanyUser[]
+  vehicles     Vehicle[]
+  vehicleRates VehicleRate[]
+  bookings     Booking[]
+
+  @@index([id])
+  @@map("companies")
+}
+
+enum CompanyUserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model CompanyUser {
+  companyId String            // Part of composite primary key
+  userId    String            // Part of composite primary key
+  status    CompanyUserStatus @default(ACTIVE)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  // Relations
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([companyId, userId])
+  @@index([userId])
+  @@index([companyId, status])
+  @@map("company_users")
+}
+
+// ============================================================================
+// Driver Profile
+// ============================================================================
+
+model DriverProfile {
+  userId String  @id
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("driver_profiles")
+}
+
+// ============================================================================
+// Vehicles & Pricing
+// ============================================================================
+
+model Vehicle {
+  id              String    @id @default(cuid())
+  companyId       String
+  name            String
+  make            String?
+  model           String?
+  year            Int?
+  capacity        Int       // Passenger capacity
+  luggageCapacity Int       @default(0)
+  childSeatCapable Boolean  @default(false)
+  active          Boolean   @default(true)
+  deletedAt       DateTime? // Soft delete
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  company       Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  rates         VehicleRate[]
+  priceSnapshots BookingPriceSnapshot[]
+
+  @@index([companyId])
+  @@index([companyId, active])
+  @@index([companyId, active, deletedAt])
+  @@map("vehicles")
+}
+
+enum RateType {
+  PER_MILE
+  PER_HOUR
+  FLAT_RATE
+}
+
+model VehicleRate {
+  id            String    @id @default(cuid())
+  companyId     String
+  vehicleId     String
+  rateType      RateType  @default(PER_MILE)
+  pricePerMile  Decimal?  @db.Decimal(10, 2) // Nullable for non-mile rates
+  pricePerHour  Decimal?  @db.Decimal(10, 2) // Nullable for non-hour rates
+  flatRate      Decimal?  @db.Decimal(10, 2) // Nullable for non-flat rates
+  effectiveFrom DateTime  @default(now())
+  effectiveTo   DateTime? // Nullable = current rate
+
+  // Relations
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, vehicleId])
+  @@index([vehicleId, effectiveFrom, effectiveTo])
+  @@map("vehicle_rates")
+}
+
+// ============================================================================
+// Bookings
+// ============================================================================
+
+enum ServiceType {
+  POINT_TO_POINT
+  HOURLY
+  MULTI_STOP
+  AIRPORT_TRANSFER
+}
+
+enum BookingStatus {
+  DRAFT
+  QUOTED
+  CONFIRMED
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model Booking {
+  id                String        @id @default(cuid())
+  companyId         String
+  createdByUserId   String?       // Nullable for guest bookings
+  guestName         String?
+  guestEmail        String?
+  guestPhone        String?
+  serviceType       ServiceType
+  pickupDateTimeUtc DateTime
+  timezone          String        @default("UTC")
+  pickupAddress     String
+  pickupLat         Decimal       @db.Decimal(10, 8)
+  pickupLng         Decimal       @db.Decimal(11, 8)
+  dropoffAddress    String
+  dropoffLat        Decimal       @db.Decimal(10, 8)
+  dropoffLng        Decimal       @db.Decimal(11, 8)
+  passengers        Int
+  luggageCount      Int           @default(0)
+  childSeatCount     Int           @default(0)
+  status            BookingStatus @default(DRAFT)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  // Relations
+  company           Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy         User?                @relation("BookingCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  stops             BookingStop[]
+  routeQuote        RouteQuote?
+  priceSnapshot     BookingPriceSnapshot?
+  tripAssignment    TripAssignment?
+  payments          Payment[]
+
+  @@index([companyId])
+  @@index([companyId, status])
+  @@index([companyId, status, pickupDateTimeUtc])
+  @@index([createdByUserId])
+  @@map("bookings")
+}
+
+model BookingStop {
+  id         String   @id @default(cuid())
+  bookingId String
+  stopOrder  Int      // 1-based ordering
+  address    String
+  lat        Decimal  @db.Decimal(10, 8)
+  lng        Decimal  @db.Decimal(11, 8)
+  createdAt  DateTime @default(now())
+
+  // Relations
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@unique([bookingId, stopOrder])
+  @@index([bookingId])
+  @@map("booking_stops")
+}
+
+// ============================================================================
+// Route & Pricing Snapshots
+// ============================================================================
+
+enum RouteProvider {
+  GOOGLE
+  MAPBOX
+}
+
+model RouteQuote {
+  id            String        @id @default(cuid())
+  bookingId     String        @unique
+  provider      RouteProvider @default(GOOGLE)
+  distanceMiles Decimal       @db.Decimal(10, 2)
+  durationMinutes Int
+  polyline      String        @db.Text
+  providerRef   String?       // Provider's reference ID
+  createdAt     DateTime      @default(now())
+
+  // Relations
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@map("route_quotes")
+}
+
+model BookingPriceSnapshot {
+  id            String   @id @default(cuid())
+  bookingId    String   @unique
+  vehicleId    String
+  rateUsed     Decimal  @db.Decimal(10, 2) // The rate that was used
+  baseFee      Decimal  @db.Decimal(10, 2) @default(0)
+  distanceFee  Decimal  @db.Decimal(10, 2) @default(0)
+  stopsFee     Decimal  @db.Decimal(10, 2) @default(0)
+  surchargesFee Decimal @db.Decimal(10, 2) @default(0)
+  total        Decimal  @db.Decimal(10, 2)
+  currency     String   @default("USD")
+  createdAt    DateTime @default(now())
+
+  // Relations
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Restrict)
+
+  @@index([bookingId])
+  @@index([vehicleId])
+  @@map("booking_price_snapshots")
+}
+
+// ============================================================================
+// Trip Assignment
+// ============================================================================
+
+model TripAssignment {
+  id              String   @id @default(cuid())
+  bookingId       String   @unique
+  driverUserId    String
+  assignedByUserId String
+  assignedAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  booking      Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  driver       User    @relation("TripDriver", fields: [driverUserId], references: [id], onDelete: Restrict)
+  assignedBy   User    @relation("TripAssigner", fields: [assignedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([driverUserId])
+  @@index([driverUserId, assignedAt])
+  @@index([bookingId])
+  @@map("trip_assignments")
+}
+
+// ============================================================================
+// Payments
+// ============================================================================
+
+enum PaymentProvider {
+  STRIPE
+  SQUARE
+  PAYPAL
+}
+
+enum PaymentStatus {
+  INITIATED
+  PAID
+  FAILED
+  REFUNDED
+}
+
+model Payment {
+  id                String          @id @default(cuid())
+  bookingId        String
+  provider          PaymentProvider @default(STRIPE)
+  providerSessionId String         @unique
+  amount            Decimal         @db.Decimal(10, 2)
+  currency          String          @default("USD")
+  status            PaymentStatus   @default(INITIATED)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  // Relations
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([providerSessionId])
+  @@index([status])
+  @@index([status, createdAt])
+  @@map("payments")
+}
