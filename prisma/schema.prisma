@@ -164,6 +164,7 @@ enum ServiceType {
 enum BookingStatus {
   DRAFT
   QUOTED
+  PENDING_PAYMENT
   CONFIRMED
   ASSIGNED
   IN_PROGRESS
@@ -196,7 +197,7 @@ model Booking {
 
   // Relations
   company           Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  createdBy         User?                @relation("BookingCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  createdBy         User?                @relation("BookingCreator", fields: [createdByUserId], references: [idpSubject], onDelete: SetNull)
   stops             BookingStop[]
   routeQuote        RouteQuote?
   priceSnapshot     BookingPriceSnapshot?
