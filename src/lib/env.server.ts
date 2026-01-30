@@ -12,6 +12,8 @@ const serverEnvSchema = z.object({
   NEXTAUTH_SECRET: z.string().min(32),
   // Tenant
   DEFAULT_COMPANY_ID: z.string().min(1),
+  // Maps
+  GOOGLE_MAPS_API_KEY: z.string().min(1),
 })
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>

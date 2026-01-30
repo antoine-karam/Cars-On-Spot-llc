@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { ServiceType } from '@prisma/client'
+import type { AvailableVehicle, BookingServiceType, RouteQuote } from '@/lib/bookingTypes'
 
 export type BookingStop = {
   id: string
@@ -10,7 +10,7 @@ export type BookingStop = {
 
 export type BookingWizardState = {
   // Step 1: Ride Info
-  serviceType: ServiceType | null
+  serviceType: BookingServiceType | null
   pickupDateTime: string // ISO string
   pickupAddress: string
   pickupLat?: number
@@ -23,15 +23,17 @@ export type BookingWizardState = {
   luggageCount: number
   childSeatCount: number
 
-  // Step 2: (Future)
-  // Step 3: (Future)
+  // Step 2: Route Quote + Vehicles
+  routeQuote: RouteQuote | null
+  availableVehicles: AvailableVehicle[]
+  selectedVehicleId: string | null
 
   // Wizard state
   currentStep: number
 }
 
 type BookingWizardActions = {
-  setServiceType: (serviceType: ServiceType) => void
+  setServiceType: (serviceType: BookingServiceType) => void
   setPickupDateTime: (dateTime: string) => void
   setPickupAddress: (address: string, lat?: number, lng?: number) => void
   setDropoffAddress: (address: string, lat?: number, lng?: number) => void
@@ -41,6 +43,9 @@ type BookingWizardActions = {
   setPassengers: (count: number) => void
   setLuggageCount: (count: number) => void
   setChildSeatCount: (count: number) => void
+  setRouteQuote: (routeQuote: RouteQuote | null) => void
+  setAvailableVehicles: (vehicles: AvailableVehicle[]) => void
+  setSelectedVehicleId: (vehicleId: string | null) => void
   setCurrentStep: (step: number) => void
   reset: () => void
 }
@@ -54,6 +59,9 @@ const initialState: BookingWizardState = {
   passengers: 1,
   luggageCount: 0,
   childSeatCount: 0,
+  routeQuote: null,
+  availableVehicles: [],
+  selectedVehicleId: null,
   currentStep: 1,
 }
 
@@ -93,6 +101,12 @@ export const useBookingStore = create<BookingWizardState & BookingWizardActions>
     setLuggageCount: (luggageCount) => set({ luggageCount }),
 
     setChildSeatCount: (childSeatCount) => set({ childSeatCount }),
+
+    setRouteQuote: (routeQuote) => set({ routeQuote }),
+
+    setAvailableVehicles: (availableVehicles) => set({ availableVehicles }),
+
+    setSelectedVehicleId: (selectedVehicleId) => set({ selectedVehicleId }),
 
     setCurrentStep: (currentStep) => set({ currentStep }),
 

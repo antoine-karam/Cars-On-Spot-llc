@@ -2,6 +2,8 @@
 
 import { useBookingStore } from '@/lib/bookingStore'
 import { RideInfoStep } from './booking-steps/ride-info-step'
+import { VehicleSelectionStep } from './booking-steps/vehicle-selection-step'
+import { BookingConfirmationStep } from './booking-steps/booking-confirmation-step'
 
 export function BookingWizard() {
   const currentStep = useBookingStore((state) => state.currentStep)
@@ -68,16 +70,8 @@ export function BookingWizard() {
       {/* Step Content */}
       <div className="p-6">
         {currentStep === 1 && <RideInfoStep />}
-        {currentStep === 2 && (
-          <div className="py-12 text-center text-gray-500 dark:text-gray-400">
-            Step 2: Vehicle Selection (Coming soon)
-          </div>
-        )}
-        {currentStep === 3 && (
-          <div className="py-12 text-center text-gray-500 dark:text-gray-400">
-            Step 3: Confirmation (Coming soon)
-          </div>
-        )}
+        {currentStep === 2 && <VehicleSelectionStep />}
+        {currentStep === 3 && <BookingConfirmationStep />}
       </div>
     </div>
   )
