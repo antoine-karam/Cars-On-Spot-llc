@@ -4,12 +4,14 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useBookingStore } from '@/lib/bookingStore'
-import { useState } from 'react'
+import { env } from '@/lib/env.client'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   bookingServiceTypeLabels,
   bookingServiceTypes,
   type BookingServiceType,
   type AvailableVehicle,
+  type LatLng,
 } from '@/lib/bookingTypes'
 
 const rideInfoSchema = z.object({
@@ -31,7 +33,11 @@ export function RideInfoStep() {
     serviceType,
     pickupDateTime,
     pickupAddress,
+    pickupLat,
+    pickupLng,
     dropoffAddress,
+    dropoffLat,
+    dropoffLng,
     stops,
     passengers,
     luggageCount,
@@ -71,8 +77,199 @@ export function RideInfoStep() {
   })
 
   const [newStopAddress, setNewStopAddress] = useState('')
+  const [newStopLocation, setNewStopLocation] = useState<LatLng | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [isMapsReady, setIsMapsReady] = useState(false)
+
+  const pickupInputRef = useRef<HTMLInputElement | null>(null)
+  const dropoffInputRef = useRef<HTMLInputElement | null>(null)
+  const stopInputRef = useRef<HTMLInputElement | null>(null)
+  const mapContainerRef = useRef<HTMLDivElement | null>(null)
+  const mapRef = useRef<google.maps.Map | null>(null)
+  const directionsRendererRef = useRef<google.maps.DirectionsRenderer | null>(null)
+
+  const pickupRegister = useMemo(
+    () =>
+      register('pickupAddress', {
+        onChange: (event) => {
+          setPickupAddress(event.target.value)
+        },
+      }),
+    [register, setPickupAddress]
+  )
+
+  const dropoffRegister = useMemo(
+    () =>
+      register('dropoffAddress', {
+        onChange: (event) => {
+          setDropoffAddress(event.target.value)
+        },
+      }),
+    [register, setDropoffAddress]
+  )
+
+  const loadGoogleMaps = () =>
+    new Promise<void>((resolve, reject) => {
+      if (typeof window === 'undefined') {
+        resolve()
+        return
+      }
+
+      if (window.google?.maps?.places) {
+        resolve()
+        return
+      }
+
+      const existingScript = document.querySelector<HTMLScriptElement>(
+        'script[data-google-maps="true"]'
+      )
+
+      if (existingScript) {
+        existingScript.addEventListener('load', () => resolve())
+        existingScript.addEventListener('error', () =>
+          reject(new Error('Failed to load Google Maps'))
+        )
+        return
+      }
+
+      const script = document.createElement('script')
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}&libraries=places`
+      script.async = true
+      script.defer = true
+      script.dataset.googleMaps = 'true'
+      script.addEventListener('load', () => resolve())
+      script.addEventListener('error', () =>
+        reject(new Error('Failed to load Google Maps'))
+      )
+      document.head.appendChild(script)
+    })
+
+  useEffect(() => {
+    let isMounted = true
+
+    loadGoogleMaps()
+      .then(() => {
+        if (isMounted) {
+          setIsMapsReady(true)
+        }
+      })
+      .catch((error) => {
+        console.error(error)
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isMapsReady || !mapContainerRef.current) {
+      return
+    }
+
+    if (!mapRef.current) {
+      mapRef.current = new google.maps.Map(mapContainerRef.current, {
+        center: { lat: 39.8283, lng: -98.5795 },
+        zoom: 4,
+        mapTypeControl: false,
+        streetViewControl: false,
+      })
+      directionsRendererRef.current = new google.maps.DirectionsRenderer({
+        map: mapRef.current,
+        suppressMarkers: false,
+      })
+    }
+  }, [isMapsReady])
+
+  useEffect(() => {
+    if (!isMapsReady) {
+      return
+    }
+
+    if (pickupInputRef.current) {
+      const autocomplete = new google.maps.places.Autocomplete(
+        pickupInputRef.current,
+        { fields: ['formatted_address', 'geometry'] }
+      )
+      autocomplete.addListener('place_changed', () => {
+        const place = autocomplete.getPlace()
+        const location = place.geometry?.location
+        if (!place.formatted_address || !location) {
+          return
+        }
+        const address = place.formatted_address
+        setValue('pickupAddress', address, { shouldValidate: true })
+        setPickupAddress(address, location.lat(), location.lng())
+      })
+    }
+
+    if (dropoffInputRef.current) {
+      const autocomplete = new google.maps.places.Autocomplete(
+        dropoffInputRef.current,
+        { fields: ['formatted_address', 'geometry'] }
+      )
+      autocomplete.addListener('place_changed', () => {
+        const place = autocomplete.getPlace()
+        const location = place.geometry?.location
+        if (!place.formatted_address || !location) {
+          return
+        }
+        const address = place.formatted_address
+        setValue('dropoffAddress', address, { shouldValidate: true })
+        setDropoffAddress(address, location.lat(), location.lng())
+      })
+    }
+
+    if (stopInputRef.current) {
+      const autocomplete = new google.maps.places.Autocomplete(stopInputRef.current, {
+        fields: ['formatted_address', 'geometry'],
+      })
+      autocomplete.addListener('place_changed', () => {
+        const place = autocomplete.getPlace()
+        const location = place.geometry?.location
+        if (!place.formatted_address || !location) {
+          return
+        }
+        const address = place.formatted_address
+        setNewStopAddress(address)
+        setNewStopLocation({ lat: location.lat(), lng: location.lng() })
+      })
+    }
+  }, [isMapsReady, setDropoffAddress, setPickupAddress, setValue])
+
+  useEffect(() => {
+    if (!mapRef.current || !directionsRendererRef.current) {
+      return
+    }
+
+    if (!pickupLat || !pickupLng || !dropoffLat || !dropoffLng) {
+      directionsRendererRef.current.setDirections({ routes: [] } as never)
+      return
+    }
+
+    const directionsService = new google.maps.DirectionsService()
+    const waypoints = stops
+      .filter((stop) => stop.lat !== undefined && stop.lng !== undefined)
+      .map((stop) => ({
+        location: { lat: stop.lat as number, lng: stop.lng as number },
+        stopover: true,
+      }))
+
+    directionsService.route(
+      {
+        origin: { lat: pickupLat, lng: pickupLng },
+        destination: { lat: dropoffLat, lng: dropoffLng },
+        waypoints,
+        travelMode: google.maps.TravelMode.DRIVING,
+      },
+      (result, status) => {
+        if (status === google.maps.DirectionsStatus.OK && result) {
+          directionsRendererRef.current?.setDirections(result)
+        }
+      }
+    )
+  }, [dropoffLat, dropoffLng, pickupLat, pickupLng, stops])
 
   const geocodeAddress = async (address: string) => {
     const response = await fetch('/api/geocode', {
@@ -104,17 +301,39 @@ export function RideInfoStep() {
       setLuggageCount(data.luggageCount)
       setChildSeatCount(data.childSeatCount)
 
-      const geocodeResults = await Promise.all([
-        geocodeAddress(data.pickupAddress),
-        geocodeAddress(data.dropoffAddress),
-        ...stops.map((stop) => geocodeAddress(stop.address)),
-      ])
+      const pickupResult =
+        pickupLat && pickupLng
+          ? { address: data.pickupAddress, location: { lat: pickupLat, lng: pickupLng } }
+          : await geocodeAddress(data.pickupAddress)
+      const dropoffResult =
+        dropoffLat && dropoffLng
+          ? { address: data.dropoffAddress, location: { lat: dropoffLat, lng: dropoffLng } }
+          : await geocodeAddress(data.dropoffAddress)
 
-      const [pickupResult, dropoffResult, ...stopResults] = geocodeResults
-      setPickupAddress(pickupResult.address, pickupResult.location.lat, pickupResult.location.lng)
-      setDropoffAddress(dropoffResult.address, dropoffResult.location.lat, dropoffResult.location.lng)
+      setPickupAddress(
+        pickupResult.address,
+        pickupResult.location.lat,
+        pickupResult.location.lng
+      )
+      setDropoffAddress(
+        dropoffResult.address,
+        dropoffResult.location.lat,
+        dropoffResult.location.lng
+      )
       setValue('pickupAddress', pickupResult.address)
       setValue('dropoffAddress', dropoffResult.address)
+
+      const stopResults = await Promise.all(
+        stops.map(async (stop) => {
+          if (stop.lat !== undefined && stop.lng !== undefined) {
+            return {
+              address: stop.address,
+              location: { lat: stop.lat, lng: stop.lng },
+            }
+          }
+          return geocodeAddress(stop.address)
+        })
+      )
 
       stopResults.forEach((result, index) => {
         const stop = stops[index]
@@ -186,10 +405,13 @@ export function RideInfoStep() {
     const stop: typeof stops[0] = {
       id: `stop-${Date.now()}`,
       address: newStopAddress.trim(),
+      lat: newStopLocation?.lat,
+      lng: newStopLocation?.lng,
     }
 
     addStop(stop)
     setNewStopAddress('')
+    setNewStopLocation(null)
   }
 
   const handleRemoveStop = (stopId: string) => {
@@ -245,7 +467,11 @@ export function RideInfoStep() {
         </label>
         <input
           type="text"
-          {...register('pickupAddress')}
+          {...pickupRegister}
+          ref={(element) => {
+            pickupRegister.ref(element)
+            pickupInputRef.current = element
+          }}
           placeholder="Enter pickup address"
           className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:focus:border-blue-400 dark:focus:ring-blue-400"
         />
@@ -263,7 +489,11 @@ export function RideInfoStep() {
         </label>
         <input
           type="text"
-          {...register('dropoffAddress')}
+          {...dropoffRegister}
+          ref={(element) => {
+            dropoffRegister.ref(element)
+            dropoffInputRef.current = element
+          }}
           placeholder="Enter dropoff address"
           className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:focus:border-blue-400 dark:focus:ring-blue-400"
         />
@@ -308,9 +538,13 @@ export function RideInfoStep() {
           <input
             type="text"
             value={newStopAddress}
-            onChange={(e) => setNewStopAddress(e.target.value)}
+            onChange={(e) => {
+              setNewStopAddress(e.target.value)
+              setNewStopLocation(null)
+            }}
             placeholder="Enter stop address"
             className="flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:focus:border-blue-400 dark:focus:ring-blue-400"
+            ref={stopInputRef}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault()
@@ -389,6 +623,21 @@ export function RideInfoStep() {
           {errorMessage}
         </p>
       )}
+
+      <div className="space-y-2">
+        <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+          Route Preview
+        </p>
+        <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+          <div className="flex h-64 items-center justify-center bg-gray-100 text-sm text-gray-500 dark:bg-gray-900/40 dark:text-gray-400">
+            {!isMapsReady ? (
+              <span>Loading map...</span>
+            ) : (
+              <div ref={mapContainerRef} className="h-64 w-full" />
+            )}
+          </div>
+        </div>
+      </div>
 
       {/* Submit Button */}
       <div className="flex flex-wrap justify-end gap-4 pt-4">
