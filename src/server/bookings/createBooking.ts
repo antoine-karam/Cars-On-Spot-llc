@@ -17,7 +17,7 @@ type BookingStopInput = {
 
 export async function createBooking(params: {
   companyId: string
-  createdByUserId?: string | null
+  createdByUserId: string
   serviceType: BookingServiceType
   pickupDateTimeUtc: Date
   pickupAddress: string
@@ -61,7 +61,7 @@ export async function createBooking(params: {
     ratePerMile: vehicle.rates[0].pricePerMile,
   })
 
-  const booking = await db.$transaction(async (tx) => {
+  const booking = await db.$transaction(async tx => {
     const createdBooking = await tx.booking.create({
       data: {
         companyId: params.companyId,
@@ -97,7 +97,9 @@ export async function createBooking(params: {
       data: {
         bookingId: createdBooking.id,
         provider:
-          RouteProvider[params.routeQuote.provider as keyof typeof RouteProvider],
+          RouteProvider[
+            params.routeQuote.provider as keyof typeof RouteProvider
+          ],
         distanceMiles: params.routeQuote.distanceMiles,
         durationMinutes: params.routeQuote.durationMinutes,
         polyline: params.routeQuote.polyline,

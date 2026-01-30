@@ -43,10 +43,12 @@ export async function POST(request: Request) {
     const parsed = bookingSchema.parse(body)
     const companyId = getCurrentCompany()
     const session = await getSession()
-
+    if (!session || !session.user.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
     const booking = await createBooking({
       companyId,
-      createdByUserId: session?.user?.id ?? null,
+      createdByUserId: session.user.id,
       serviceType: parsed.serviceType,
       pickupDateTimeUtc: new Date(parsed.pickupDateTimeUtc),
       pickupAddress: parsed.pickupAddress,
